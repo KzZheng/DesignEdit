@@ -10,8 +10,9 @@ import copy
 import torch.nn.functional as F
 from diffusers.loaders import  LoraLoaderMixin, TextualInversionLoaderMixin 
 from diffusers.models.attention_processor import ( AttnProcessor2_0, LoRAAttnProcessor2_0, LoRAXFormersAttnProcessor, XFormersAttnProcessor, ) 
-from diffusers.utils import (  logging, randn_tensor, replace_example_docstring, ) 
-from diffusers.pipelines.stable_diffusion_xl import StableDiffusionXLPipelineOutput 
+from diffusers.utils import (  logging, replace_example_docstring, )
+from diffusers.utils.torch_utils import randn_tensor
+from diffusers.pipelines.stable_diffusion_xl.pipeline_output import StableDiffusionXLPipelineOutput 
 from diffusers.pipelines.stable_diffusion_xl.pipeline_stable_diffusion_xl import rescale_noise_cfg
 import os
 logger = logging.get_logger(__name__)
@@ -163,11 +164,24 @@ class sdxl(StableDiffusionXLPipeline):
 
         inv_batch_size = len(latents) if latents is not None else 1
         # 1. Check inputs. Raise error if not correct
+        # self.check_inputs(
+        #     prompt,
+        #     height,
+        #     width,
+        #     callback_steps,
+        #     negative_prompt,
+        #     prompt_embeds,
+        #     negative_prompt_embeds,
+        #     pooled_prompt_embeds,
+        #     negative_pooled_prompt_embeds,
+        # )
         self.check_inputs(
+            prompt,
             prompt,
             height,
             width,
             callback_steps,
+            negative_prompt,
             negative_prompt,
             prompt_embeds,
             negative_prompt_embeds,
@@ -238,8 +252,13 @@ class sdxl(StableDiffusionXLPipeline):
 
         # 7. Prepare added time ids & embeddings
         add_text_embeds = pooled_prompt_embeds
+        if self.text_encoder_2 is None:
+            text_encoder_projection_dim = int(pooled_prompt_embeds.shape[-1])
+        else:
+            text_encoder_projection_dim = self.text_encoder_2.config.projection_dim
+            
         add_time_ids = self._get_add_time_ids(
-            original_size, crops_coords_top_left, target_size, dtype=prompt_embeds.dtype
+            original_size, crops_coords_top_left, target_size, dtype=prompt_embeds.dtype, text_encoder_projection_dim=text_encoder_projection_dim,
         )
 
         if do_classifier_free_guidance:
@@ -343,7 +362,8 @@ class sdxl(StableDiffusionXLPipeline):
             image = latents
             return StableDiffusionXLPipelineOutput(images=image)
 
-        image = self.watermark.apply_watermark(image)
+        if self.watermark is not None:
+                image = self.watermark.apply_watermark(image)
         image = self.image_processor.postprocess(image, output_type=output_type)
 
         # Offload last model to CPU

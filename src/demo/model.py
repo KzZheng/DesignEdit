@@ -2,19 +2,19 @@ import numpy as np
 import torch
 from diffusers import  DDIMScheduler
 import cv2
-from utils.sdxl import sdxl
-from utils.inversion import Inversion
+from DesignEdit.utils.sdxl import sdxl
+from DesignEdit.utils.inversion import Inversion
 import math
 import torch.nn.functional as F
-import utils.utils as utils
+import DesignEdit.utils.utils as utils
 import os 
 import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFont
 
 MAX_NUM_WORDS = 77
 
-def init_model(model_path, model_dtype="fp16", num_ddim_steps=50):
-    device = torch.device('cuda:0') if torch.cuda.is_available() else torch.device('cpu')
+def init_model(model_path, model_dtype="fp16", num_ddim_steps=50, device = torch.device('cuda:0')):
+    
     scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
     if model_dtype == "fp16":
         torch_dtype = torch.float16
@@ -107,7 +107,8 @@ class LayerFusion:
         if self.blend_time[0] <= self.counter <= self.blend_time[1]:
             x_t[1:2] = x_t[1:2]*self.remove_mask + x_t[0:1]*(1-self.remove_mask) 
 
-        if self.counter == self.blend_time[1] + 1 and self.mode != "removal":
+        # if self.counter == self.blend_time[1] + 1 and self.mode != "removal":
+        if self.blend_time[1]-10 <= self.counter <= self.blend_time[1]+1 and self.mode != "removal":
             b = x_t.shape[0]
             bg_id = 1 #bg_layer
             op_id = 2 #canvas
@@ -221,14 +222,15 @@ def register_attention_control(model, controller, mask_time=[0, 40], refine_time
     controller.num_att_layers = cross_att_count
 
 class DesignEdit():
-    def __init__(self, pretrained_model_path="/home/jyr/model/stable-diffusion-xl-base-1.0"):
+    def __init__(self, pretrained_model_path="/home/jyr/model/stable-diffusion-xl-base-1.0", device="cuda"):
         self.model_dtype = "fp16"
         self.pretrained_model_path=pretrained_model_path
         self.num_ddim_steps = 50
         self.mask_time = [0, 40]
         self.op_list = {}
         self.attend_scale = {}
-        self.ldm_model, self.inversion= init_model(model_path=self.pretrained_model_path, model_dtype=self.model_dtype, num_ddim_steps=self.num_ddim_steps)
+        self.device = device
+        self.ldm_model, self.inversion= init_model(model_path=self.pretrained_model_path, model_dtype=self.model_dtype, num_ddim_steps=self.num_ddim_steps, device=device)
     
     def run_remove(self, original_image=None, mask_1=None, mask_2=None, mask_3=None, refine_mask=None, 
         ori_1=None, ori_2=None, ori_3=None,
@@ -269,9 +271,10 @@ class DesignEdit():
                         negative_prompt_embeds=prompt_embeds, 
                         negative_pooled_prompt_embeds=pooled_prompt_embeds,
                         sample_ref_match=sample_ref_match)
-        folder = None
-        utils.view_images(images, folder=folder)
-        return [cv2.resize(images[1], (ori_shape[1], ori_shape[0]))]
+        # folder = None
+        # utils.view_images(images, folder=folder)
+        # return [cv2.resize(images[1], (ori_shape[1], ori_shape[0]))]
+        return [images[1].resize((ori_shape[1], ori_shape[0]))]
 
 
     def run_zooming(self, original_image, width_scale=1, height_scale=1, prompt="", save_dir="./tmp", mode='removal'):
@@ -392,10 +395,10 @@ class DesignEdit():
         return image_paths, mask_paths, op_list, truncated_sample_ref_match
 
 
-    def run_layer(self, bg_img, l1_img, l1_dx, l1_dy, l1_resize, l1_w_flip, l1_h_flip, 
-        l2_img, l2_dx, l2_dy, l2_resize, l2_w_flip, l2_h_flip,
-        l3_img, l3_dx, l3_dy, l3_resize, l3_w_flip, l3_h_flip,
-        bg_mask, l1_mask, l2_mask, l3_mask,
+    def run_layer(self, bg_img, l1_img, l1_dx=0, l1_dy=0, l1_resize=1, l1_w_flip=None, l1_h_flip=None, 
+        l2_img=None, l2_dx=0, l2_dy=0, l2_resize=1, l2_w_flip=None, l2_h_flip=None,
+        l3_img=None, l3_dx=0, l3_dy=0, l3_resize=1, l3_w_flip=None, l3_h_flip=None,
+        bg_mask=None, l1_mask=None, l2_mask=None, l3_mask=None,
         bg_ori=None, l1_ori=None, l2_ori=None, l3_ori=None,
         prompt="", save_dir="./tmp", mode='layerwise'):
         # 00： prepare: layer-wise states
@@ -421,7 +424,7 @@ class DesignEdit():
         image_gt = [bg_img] + image_paths
         image_gt = [Image.fromarray(img).resize((1024, 1024)) for img in image_gt]
         image_gt = np.stack(image_gt)      
-        remove_mask = utils.attend_mask(bg_mask, attend_scale=attend_scale)
+        remove_mask = utils.attend_mask(bg_mask, attend_scale=attend_scale).to(self.device)
         refine_mask = None
 
         # 01-2: prepare: promptrun_masks, blend_time, refine_time
@@ -443,12 +446,14 @@ class DesignEdit():
                         negative_prompt_embeds=prompt_embeds, 
                         negative_pooled_prompt_embeds=pooled_prompt_embeds,
                         sample_ref_match=sample_ref_match)
-        folder = None
-        utils.view_images(images, folder=folder) 
+        # folder = None
+        # utils.view_images(images, folder=folder) 
         if mode == 'removal':
-            resized_img = cv2.resize(images[1], (ori_shape[1], ori_shape[0]))       
+            # resized_img = cv2.resize(images[1], (ori_shape[1], ori_shape[0]))
+            resized_img = images[1].resize((ori_shape[1], ori_shape[0]))   
         else:
-            resized_img = cv2.resize(images[2], (ori_shape[1], ori_shape[0]))       
+            # resized_img = cv2.resize(images[2], (ori_shape[1], ori_shape[0]))
+            resized_img = images[2].resize((ori_shape[1], ori_shape[0]))    
         return [resized_img]
     
 
