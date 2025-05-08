@@ -162,14 +162,15 @@ def register_attention_control(model, controller, mask_time=[0, 40], refine_time
                     H = W = int(math.sqrt(i))
                     x_old = x.clone()
                     x = x.reshape(b, H, W, j)
+                    device = x.device
                     new_mask = controller.layer_fusion.remove_mask
                     if new_mask is not None:
                         new_mask[new_mask>0] = 1
-                        new_mask = F.interpolate(new_mask.to(dtype=torch.float32).clone(), size=(H, W), mode='bilinear').cuda()
+                        new_mask = F.interpolate(new_mask.to(dtype=torch.float32).clone(), size=(H, W), mode='bilinear').to(device)
                         new_mask =  (1 - new_mask).reshape(1, H, W).unsqueeze(-1)
                         if (refine_time[0] < self.counter <= refine_time[1]) and controller.layer_fusion.refine_mask is not None:
                             new_mask = controller.layer_fusion.new_mask
-                            new_mask = F.interpolate(new_mask.to(dtype=torch.float32).clone(), size=(H, W), mode='bilinear').cuda()
+                            new_mask = F.interpolate(new_mask.to(dtype=torch.float32).clone(), size=(H, W), mode='bilinear').to(device)
                             new_mask =  (1 - new_mask).reshape(1, H, W).unsqueeze(-1)                
                         idx = 1 #inpaiint_idx:bg
                         x[int(b/2)+idx, :, :] = (x[int(b/2)+idx, :, :]*new_mask[0])
@@ -247,9 +248,9 @@ class DesignEdit():
         image_gt = Image.fromarray(original_image).resize((1024, 1024))
         image_gt = np.stack([np.array(image_gt)])
         mask_list = [mask_1, mask_2, mask_3]
-        remove_mask = utils.attend_mask(utils.add_masks_resized(mask_list), attend_scale=attend_scale) # numpy to tensor
+        remove_mask = utils.attend_mask(utils.add_masks_resized(mask_list), attend_scale=attend_scale).to(self.device) # numpy to tensor
         fg_mask_list = None
-        refine_mask = utils.attend_mask(utils.convert_and_resize_mask(refine_mask)) if refine_mask is not None else None
+        refine_mask = utils.attend_mask(utils.convert_and_resize_mask(refine_mask)).to(self.device) if refine_mask is not None else None
 
         # 01-3: prepare: prompts, blend_time, refine_time
         prompts = len(sample_ref_match)*[prompt] # 2
